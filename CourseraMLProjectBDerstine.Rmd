@@ -1,0 +1,184 @@
+---
+title: "CourseraMLProject"
+author: "BDerstine"
+date: "12/2/2017"
+output: 
+  html_document: 
+    keep_md: yes
+    toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE, cache=T}
+knitr::opts_chunk$set(echo = TRUE)
+Sys.setenv(TZ="America/Chicago")
+
+rm(list=ls())
+library(caret)
+# library(ggplot2)
+
+## get data (not run)
+# curl::curl_download("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv","pml-training.csv")
+# curl::curl_download("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv","pml-testing.csv")
+
+training <- read.csv("pml-training.csv", na.strings = c("#DIV/0!","","NA"))
+testing <- read.csv("pml-testing.csv", na.strings = c("#DIV/0!","","NA"))
+
+# names(training) <- gsub(pattern = "picth", replacement = "pitch", names(training))
+# names(testing) <- gsub(pattern = "picth", replacement = "pitch", names(testing))
+
+# find variablse with near zero (or zero) variance to exclude
+nzv <- nearZeroVar(testing, names=T)
+
+# other variables that are not useful:
+exclude <- c(nzv, c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "num_window", "classe"))
+
+varsToUse <- names(training)[!names(training) %in% exclude]
+
+
+## split dataset for analysis
+
+set.seed(2468)
+inTrain <- createDataPartition(y=training$classe, p=.75, list=F)
+train_train <- training[inTrain,c(varsToUse,"classe")]
+train_test <- training[-inTrain,c(varsToUse,"classe")]
+
+# use x/y syntax per https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md
+x <- train_train[,-53]
+y <- train_train[,53]
+
+# parallel processing stuff
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+#set caret training options
+set.seed(2468)
+fitControl <- trainControl(classProbs = T,
+                           method = "cv",
+                           number = 5,
+                           preProcOptions = "pca",
+                           allowParallel = TRUE)
+
+## Random Forest model with PCA and 5-fold CV
+modelRF <- train(x,y,   
+                 method="rf",
+                 trControl=fitControl, 
+                 data=train_train)
+
+# stop parallel stuff
+stopCluster(cluster)
+registerDoSEQ()
+
+
+# Peer Review Portion
+
+# Your submission for the Peer Review portion should consist of 
+# 1. a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-).
+
+# Reproducibility
+# 
+# Due to security concerns with the exchange of R code, your code will not be run during the evaluation by your classmates. Please be sure that if they download the repo, they will be able to view the compiled HTML version of your analysis.
+
+```
+
+
+
+# Background
+(Copied from the Course Project assignment website)
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, (my) goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+* exactly according to the specification (Class A),   
+* throwing the elbows to the front (Class B),  
+* lifting the dumbbell only halfway (Class C),  
+* lowering the dumbbell only halfway (Class D) and   
+* throwing the hips to the front (Class E).  
+
+More information is available from the website here: http://groupware.les.inf.puc-rio.br/har#weight_lifting_exercises.
+
+
+# Data
+
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. (Thanks!) 
+
+An example of what the data look like:
+```{r, echo=F}
+ggplot(training, aes(color=num_window, x=raw_timestamp_part_2, y=yaw_arm)) +
+  facet_grid(classe ~ user_name) +
+  geom_point(size=.05)
+```
+
+There are some highly correlated variables in the data: 
+
+```{r, echo=F}
+library(psych)
+rs <- corr.test(train_train[,-53])
+
+library(corrplot)
+corrplot(rs$r, method = "ellipse",type = "upper", order = "FPC", tl.col = "black", tl.cex = 0.5, sig.level = 0.05, insig = "pch", pch.cex = 1, add = F)
+
+```
+
+# Methods 
+
+The goal of (my) project is to predict the manner in which the participants did the exercise. This is the "classe" variable in the training set. Information about the other variables collected is available here: http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf 
+
+The only variables that will actually be useful to me are the ones that are in the testing dataset. Any variable with all NA values in the testing set will not be be used in my training models. The following summaries my technique:   
+
+1. First, subset the training dataset to only the non-NA and non-nearZeroVariance variables in the testing set and ignoring the variables that are not from the sensors (e.g., user name, timestamp, window, etc.).  
+2. Check the variable encoding (numeric/factor/etc.) to make sure that it is appropriate. 
+3. Split the subsetted training dataset into a 75\% training set and 25\% testing set.  
+4. Use principal components analysis (PCA) to combine correlated predictors (there are many).  
+5. Train a Random Forest classifier using 5-fold cross-validation on the training set, using parallel processing to utilize maximum cores and minimize run time.  
+
+
+
+# Results
+My final model had an Accuracy of 99\% in the training and testing sets that I created, so I expect the out of sample Accuracy to be 99\% as well (1\% error rate). 
+
+List of variable importance in the final model:
+```{r, echo=F}
+plot(varImp(modelRF), main="Variable Importance", cex.axis=.75)
+
+```
+
+### Training Set:
+Model accuracy summaries (training set, each resample, and CV confusion matrix) below:
+
+```{r results, echo=F}
+
+# check accuracy on training set:
+modelRF
+modelRF$resample
+confusionMatrix.train(modelRF)
+
+library(rpart.plot)
+plot(modelRF$finalModel, sub="Error Rate of Random Forest Trees")
+
+```
+
+### Testing Set:
+And on the testing (OOB) set:
+```{r, echo=F}
+# check accuracy on testing set:
+confusionMatrix(train_test$classe, predict(modelRF,train_test))
+
+```
+
+
+# Discussion
+
+I split the datset into training and testing so that I could get a good estimate of out of bag (OOB) sample error. I used PCA for variable reduction because many of the variables were highly correlated. I used 5-fold cross-validation to reduce the chance of over-fitting the training set and attempt to minimize bias and variance. I chose to do Random Forest (RF) because this is a classification problem with many classes and RF has performed well in these cases.  
+
+Also Len's (Course Mentor) write-up here was quite helpful in implementing parallel processing to optimize the use of my computer's cores and minimize processing time:  https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md was quite helpful.
+
